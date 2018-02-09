@@ -1,7 +1,6 @@
 //MERCADO BITCOIN
 "use strict";
 
-
 const unirest = require('unirest')
 const crypto  = require('crypto')
 const qs      = require('querystring')
@@ -74,10 +73,7 @@ MercadoBitcoinTrade.prototype = {
         this.call('cancel_order', {coin_pair: `BRL${config.CURRENCY}`, order_id: orderId}, success, error)
     },
 
-
-
     call: function (method, parameters, success, error) {
-
         var now = Math.round(new Date().getTime() )
         var queryString = qs.stringify({'tapi_method': method, 'tapi_nonce': (now)})
         console.log(`tapi_nonce ${now}`)

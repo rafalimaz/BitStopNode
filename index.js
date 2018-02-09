@@ -4,9 +4,9 @@
 require("dotenv-safe").load()
 const MercadoBitcoin = require("./api").MercadoBitcoin
 const MercadoBitcoinTrade = require("./api").MercadoBitcoinTrade
-var infoApi = new MercadoBitcoin({ currency: 'LTC' })
+var infoApi = new MercadoBitcoin({ currency: 'BTC' })
 var tradeApi = new MercadoBitcoinTrade({
-    currency: 'LTC',
+    currency: 'BTC',
     key: process.env.KEY,
     secret: process.env.SECRET,
     pin: process.env.PIN
@@ -15,129 +15,126 @@ var tradeApi = new MercadoBitcoinTrade({
 const UtilClass = require("./util").Util
 var U = new UtilClass()
 
-
-// tradeApi.getAccountInfo(response_data => {
-//     console.log(response_data);
-//     process.exit();
-// })
-
-// getQuantity('LTC', 1, false, (qty) => {
-//     console.log(qty)
-//     process.exit();
-// })
-
-//TODO avaliar disponibilidade antes de executar a operação
-
 var d = {}
-d.env = "production" // test | production
-d.crawlerIntevalo = 40000 // Em milisegundos
-d.quantidadeVendaLtc = 0.05
-d.quantidadeCompraLtc = 0.05
-d.lucroMinimo = 0.08
-d.tradesExecutionMax = 5000
+d.env = "test" // test | production
+d.crawlerInteval = 20000
+d.sellAmount = 0.001
+d.buyAmount = 0.001
+d.profit = 0.08
+d.stopLoss = 0.015
+d.takeProfit = 0.06
+d.buyPrice = 28500
+d.stopLossPrice = d.lastPrice * (1 - parseFloat(d.stopLoss))
+d.endExecution = false
+d.checkSellOrder = false
 
+function getQuantity(coin, price, isBuy, callback){
+    price = parseFloat(price)
+    coin = isBuy ? 'brl' : coin.toLowerCase()
 
-if (d.lucroMinimo < 0.0065 && d.env != "test") {
-    console.log("Lucro muito baixo para produção");
-    process.exit(1);
+    tradeApi.getAccountInfo((response_data) => {
+        var balance = parseFloat(response_data.balance[coin].available).toFixed(5)
+        balance = parseFloat(balance)
+        if (isBuy && balance < 50) return console.log('Sem saldo disponível para comprar!')
+        console.log(`Saldo disponível de ${coin}: ${balance}`)
+        
+        if (isBuy) balance = parseFloat((balance / price).toFixed(5))
+        callback(parseFloat(balance) - 0.00001)//tira a diferença que se ganha no arredondamento
+    }, 
+    (data) => console.log(data))
 }
 
-function definirPrecos(d, lastPrice) {
-    d.precoBase = lastPrice
-    d.precoMinimoVenda = d.precoBase * (1 + parseFloat(d.lucroMinimo))
-    d.precoMaximoCompra = d.precoBase * (1 - parseFloat(d.lucroMinimo))
-    let precos = {}
-    precos.precoBase = d.precoBase
-    precos.precoMinimoVenda = d.precoMinimoVenda
-    precos.precoMaximoCompra = d.precoMaximoCompra
-    console.log("Novos preços obtidos: ");
-    console.log(precos)
-}
-
-function calcularDefinicoesVariaves(d) {
-    infoApi.ticker((tick) => {
-        definirPrecos(d, parseFloat(tick.ticker.last))
-        rodar()
-    })
-}
-
-
-function tentarTrade() {
-
-    if (!d.tradeExecution && d.tradeExecution != 0 || !d.tradesExecutionMax || d.tradesExecution > d.tradesMax) {
-        console.log("Número máximo de trades executados, finalizando... bom lucro!");
-        console.log(d)
+function trade() {
+    if (d.endExecution) {
+        console.log("Execution finished.");
+        console.log(new Date());
         process.exit(0)
     }
 
-    console.log(d)
+    if (d.checkSellOrder) 
+    {
+        //TODO checkNewPrice and verify if need cancel and recreate sell order
+        console.log("Check if sell order is processed.");
+        console.log(new Date());
+        process.exit(0)
+    }
+
     infoApi.ticker((tick) => {
         tick = tick.ticker
-        console.log(tick)
-        // console.log(tick.last)
 
-        // Vender
-        if (tick.last >= d.precoMinimoVenda) {
-            if (d.env === "test") {
-                console.log(`SIMULAÇÃO - Criada ordem de venda ${d.quantidadeVendaLtc} por ${tick.last}`)
-                console.log('SIMULAÇÃO - Ordem de venda inserida no livro.')
-                d.tradeExecution++;
-                definirPrecos(d, tick.last)
+        if (tick.last < d.takeProfitPrice && tick.last > d.stopLossPrice) {
+            if (tick.last > d.currentPrice) {
+                resetStopLoss(d, tick.last)
             }
-            if (d.env === "production") {
-                tradeApi.placeSellOrder(d.quantidadeVendaLtc, tick.last,
-                    (data) => {
-                        console.log(`Criada ordem de venda ${d.quantidadeVendaLtc} por ${tick.last}`)
-                        console.log('Ordem de venda inserida no livro. ' + data)
-                        d.tradeExecution++;
-                        definirPrecos(d, tick.last)
-                    },
-                    (data) => {
-                        console.log('Erro ao inserir ordem de venda no livro. ' + data)
-                    }
-                )
-            }
+
+            logPrices(d, "No action necessary: ", tick.last);
+            return;
+        } else if (tick.last >= d.takeProfitPrice) {
+            logPrices(d, "Take Profit: ", tick.last);
+        } else if (tick.last <= d.stopLossPrice) {
+            logPrices(d, "Stop Loss: ", tick.last);
         } else {
-            console.log("Barato demais para vender, aguarde mais um pouco até alcançar " + d.precoMinimoVenda)
+            logPrices(d, "No action necessary: ", tick.last);
+            return;
+        }
+        
+        if (d.env === "test") {
+            console.log(`SIMULAÇÃO - Criada ordem de venda ${d.sellAmount} por ${tick.last}`)
+            d.tradeExecution++;
+            d.checkSellOrder = true;
         }
 
-        // Comprar
-        if (tick.last <= d.precoMaximoCompra) {
-            if (d.env === "test") {
-                console.log(`SIMULAÇÃO - Criada ordem de compra ${d.quantidadeCompraLtc} por ${tick.last}`)
-                console.log('SIMULAÇÃO - Ordem de compra inserida no livro.')
-                d.tradeExecution++;
-                definirPrecos(d, tick.last)
-            }
-            if (d.env === "production") {
-                tradeApi.placeBuyOrder(d.quantidadeCompraLtc, tick.last,
-                    (data) => {
-                        console.log(`Criada ordem de compra ${d.quantidadeCompraLtc} por ${tick.last}`)
-                        console.log('Ordem de compra inserida no livro. ' + data)
-                        d.tradeExecution++;
-                        definirPrecos(d, tick.last)
-                    },
-                    (data) => {
-                        console.log('Erro ao inserir ordem de compra no livro. ' + data)
-                    }
-                )
-            }
-        } else {
-            console.log("Caro demais para comprar, aguarde mais um pouco até alcançar " + d.precoMaximoCompra)
+        if (d.env === "production") {
+            tradeApi.placeSellOrder(d.sellAmount, tick.last,
+                (data) => {
+                    console.log(`Criada ordem de venda ${d.sellAmount} por ${tick.last}`)
+                    d.tradeExecution++;
+                    d.checkSellOrder = true;
+                },
+                (data) => {
+                    console.log('Erro ao inserir ordem de venda no livro. ' + data)
+                }
+            )
         }
     })
 }
 
-function preparar() {
+function resetStopLoss(d, lastPrice) {
+    d.lastPrice = lastPrice
+    d.stopLossPrice = d.lastPrice * (1 - parseFloat(d.stopLoss))
+    logPrices(d, "Reset Stop Loss: ")
+}
+
+function resetPrices(d, lastPrice) {
+    d.lastPrice = lastPrice
+    d.takeProfitPrice = d.lastPrice * (1 + parseFloat(d.takeProfit))
+    d.stopLossPrice = d.lastPrice * (1 - parseFloat(d.stopLoss))
+    logPrices(d, "Reset Prices: ")
+}
+
+function logPrices(d, msg, currentPrice) {
+    let prices = {}
+    
+    if (currentPrice) {
+        prices.currentPrice = currentPrice
+    }
+
+    prices.lastPrice = d.lastPrice
+    prices.takeProfitPrice = d.takeProfitPrice
+    prices.stopLossPrice = d.stopLossPrice
+    
+    console.log(msg);
+    console.log(prices)
+}
+
+function start() {
     d.tradeExecution = 0
-    // Irá chamar rodar no final
-    calcularDefinicoesVariaves(d)
+    resetPrices(d, d.buyPrice)
+    infoApi.ticker((tick) => {
+        console.log("Start: " + new Date());
+        //resetStopLoss(d, parseFloat(tick.ticker.last))
+        setInterval(() => trade(), d.crawlerInteval)
+    })
 }
 
-function rodar() {
-    setInterval(() => tentarTrade(), d.crawlerIntevalo)
-}
-
-////////////////////////////// Início da execução //////////////////////////////////////////////////
-
-preparar();
+start();

@@ -1,7 +1,7 @@
 {
-  "name": "bitstopnode",
+  "name": "mercadobitcoin",
   "version": "1.0.0",
-  "description": "a tool to trade crypto currencies",
+  "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -11,8 +11,8 @@
   "dependencies": {
     "crypto": "^1.0.1",
     "dotenv-safe": "^4.0.4",
-    "express": "^4.16.2",
     "querystring": "^0.2.0",
+    "synchronize": "^2.0.0",
     "unirest": "^0.5.1"
   }
 }
