@@ -4,8 +4,6 @@
 require("dotenv-safe").load()
 const MercadoBitcoin = require("./api").MercadoBitcoin
 const MercadoBitcoinTrade = require("./api").MercadoBitcoinTrade
-const unirest = require('unirest')
-
 var infoApi = new MercadoBitcoin({ currency: 'BTC' })
 var tradeApi = new MercadoBitcoinTrade({
     currency: 'BTC',
@@ -18,24 +16,18 @@ const UtilClass = require("./util").Util
 var U = new UtilClass()
 
 var d = {}
-d.env = "production" // test | production
-d.crawlerInteval = 50000
-d.sellAmount = 0.05127
-d.buyAmount = 0.05127
+d.env = "test" // test | production
+d.crawlerInteval = 20000
+d.sellAmount = 0.001
+d.buyAmount = 0.001
 d.profit = 0.08
-d.stopLoss = 0.016
-d.takeProfit = 0.1
-d.buyPrice = 28400
+d.stopLoss = 0.015
+d.takeProfit = 0.06
+d.buyPrice = 30129
 d.stopLossPrice = (d.lastPrice * (1 - parseFloat(d.stopLoss))).toFixed(2)
 d.endExecution = false
 d.checkSellOrder = false
-d.confirmTrend = false
-d.currentTime = ""
-d.bidUSDPrice = 0
-d.askUSDPrice = 0
-d.supportPrice = 8550
-d.resistencePrice = 9200
-d.status = ""
+d.confirmTrend = false;
 
 function getQuantity(coin, price, isBuy, callback){
     price = parseFloat(price)
@@ -51,30 +43,6 @@ function getQuantity(coin, price, isBuy, callback){
         callback(parseFloat(balance) - 0.00001)//tira a diferença que se ganha no arredondamento
     }, 
     (data) => console.log(data))
-}
-
-function getBitfinexPrice(success) {
-    unirest.get("https://api.bitfinex.com/v2/tickers?symbols=tBTCUSD")
-        .headers('Accept', 'application/json')
-        .end(function (response) {
-            try{
-                return success(JSON.parse(response.raw_body));
-            }
-            catch(ex){ console.log(ex)}
-    });
-}
-
-function setDate(tickDate) {
-    var date = new Date(tickDate*1000);
-    // Hours part from the timestamp
-    var hours = date.getHours();
-    // Minutes part from the timestamp
-    var minutes = "0" + date.getMinutes();
-    // Seconds part from the timestamp
-    var seconds = "0" + date.getSeconds();
-
-    // Will display time in 10:30:23 format
-    d.currentTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
 }
 
 function trade() {
@@ -94,16 +62,7 @@ function trade() {
 
     infoApi.ticker((tick) => {
         tick = tick.ticker
-        //console.log(tick)
-        var lastSellOrder = parseFloat(tick.sell).toFixed(2); //Get last sell order
-        var lastPrice = parseFloat(tick.last).toFixed(2);  
-        
-        setDate(tick.date);
-
-        if (lastSellOrder > lastPrice) { //Adjusting for spread problem
-            lastPrice = lastSellOrder;
-        }
-
+        var lastPrice = parseFloat(tick.last).toFixed(2);
         if (parseInt(lastPrice) == parseInt(d.currentPrice)) {
             logPrices(d, "No action necessary, same price: ", lastPrice);
             d.confirmTrend = false;
@@ -111,17 +70,15 @@ function trade() {
         }
 
         if (lastPrice < d.takeProfitPrice && lastPrice > d.stopLossPrice) {
-            //if (lastPrice > d.currentPrice) {
-            //    resetStopLoss(d, lastPrice)
-            //}
+            if (lastPrice > d.currentPrice) {
+                resetStopLoss(d, lastPrice)
+            }
 
             logPrices(d, "No action necessary: ", lastPrice);
             d.confirmTrend = false;
             return;
         } else if (lastPrice >= d.takeProfitPrice) {
             logPrices(d, "Take Profit: ", lastPrice);
-            console.log("Finished with take profit");
-            return;
         } else if (lastPrice <= d.stopLossPrice) {
             logPrices(d, "Stop Loss: ", lastPrice);
         } else {
@@ -184,14 +141,13 @@ function logPrices(d, msg, currentPrice) {
     prices.lastPrice = d.lastPrice
     prices.takeProfitPrice = d.takeProfitPrice
     prices.stopLossPrice = d.stopLossPrice
-    prices.currentTime = d.currentTime
-    prices.bidUSDPrice = d.bidUSDPrice
-    prices.askUSDPrice = d.askUSDPrice
-    prices.supportPrice = d.supportPrice
-    prices.status = d.askUSDPrice > d.supportPrice ? "HOLD" : "SELL NOW!"
     
     console.log(msg);
     console.log(prices)
+}
+
+function easyStopLoss() {
+    
 }
 
 function start() {
@@ -200,9 +156,7 @@ function start() {
     infoApi.ticker((tick) => {
         console.log("Start: " + new Date());
         //resetStopLoss(d, parseFloat(tick.ticker.last))
-        setInterval(() => getBitfinexPrice(function(data) { d.askUSDPrice = data[0][3]; d.bidUSDPrice = data[0][1]; trade(); } ); , d.crawlerInteval)
-        
-        
+        setInterval(() => trade(), d.crawlerInteval)
     })
 }
 
