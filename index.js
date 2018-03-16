@@ -17,41 +17,37 @@ var tradeApi = new MercadoBitcoinTrade({
 const UtilClass = require("./util").Util
 var U = new UtilClass()
 
+var nodemailer = require('nodemailer');
+
+var transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.MAILUSER,
+    pass: process.env.MAILPASS
+  }
+});
+
+var mailOptions = {
+  from: process.env.MAILFROM,
+  to: process.env.MAILTO, 
+  subject: 'Order created!',
+  text: 'Created order!'
+};
+
 var d = {}
-d.env = "production" // test | production
-d.crawlerInteval = 50000
-d.sellAmount = 0.05127
-d.buyAmount = 0.05127
-d.profit = 0.08
-d.stopLoss = 0.016
-d.takeProfit = 0.1
-d.buyPrice = 28400
-d.stopLossPrice = (d.lastPrice * (1 - parseFloat(d.stopLoss))).toFixed(2)
-d.endExecution = false
-d.checkSellOrder = false
-d.confirmTrend = false
-d.currentTime = ""
-d.bidUSDPrice = 0
-d.askUSDPrice = 0
-d.supportPrice = 8550
-d.resistencePrice = 9200
-d.status = ""
+var p = {}
+d.test = true
+d.crawlerInteval = 20000
+d.amountBTC = 0.02
+d.askUSD = 99999
+d.bidUSD = 0
 
-function getQuantity(coin, price, isBuy, callback){
-    price = parseFloat(price)
-    coin = isBuy ? 'brl' : coin.toLowerCase()
+p.priceBRL = 99999
+p.priceUSD = 0
+p.stopUSD = (8530.0).toFixed(1)
+p.profitUSD = (8540.0).toFixed(1)
 
-    tradeApi.getAccountInfo((response_data) => {
-        var balance = parseFloat(response_data.balance[coin].available).toFixed(5)
-        balance = parseFloat(balance)
-        if (isBuy && balance < 50) return console.log('Sem saldo disponível para comprar!')
-        console.log(`Saldo disponível de ${coin}: ${balance}`)
-        
-        if (isBuy) balance = parseFloat((balance / price).toFixed(5))
-        callback(parseFloat(balance) - 0.00001)//tira a diferença que se ganha no arredondamento
-    }, 
-    (data) => console.log(data))
-}
+p.currentTime = ""
 
 function getBitfinexPrice(success) {
     unirest.get("https://api.bitfinex.com/v2/tickers?symbols=tBTCUSD")
@@ -64,145 +60,101 @@ function getBitfinexPrice(success) {
     });
 }
 
-function setDate(tickDate) {
-    var date = new Date(tickDate*1000);
-    // Hours part from the timestamp
-    var hours = date.getHours();
-    // Minutes part from the timestamp
-    var minutes = "0" + date.getMinutes();
-    // Seconds part from the timestamp
-    var seconds = "0" + date.getSeconds();
-
-    // Will display time in 10:30:23 format
-    d.currentTime = hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+// Will return time as 10:30:23
+function formatDate(date) {
+     return date.getHours() + ':' + ("0" + date.getMinutes()).substr(-2) + ':' + ("0" + date.getSeconds()).substr(-2);
 }
 
-function trade() {
-    if (d.endExecution) {
-        console.log("Execution finished.");
-        console.log(new Date());
-        process.exit(0)
-    }
+function sendEmail(message, callback) {
+    mailOptions.text = message;
+    transporter.sendMail(mailOptions, function(error, info){
+      if (error) {
+        console.log(error);
+      } else {
+        console.log('Email sent: ' + info.response);
+      }
 
-    if (d.checkSellOrder) 
-    {
-        //TODO checkNewPrice and verify if need cancel and recreate sell order
-        console.log("Check if sell order is processed.");
-        console.log(new Date());
-        process.exit(0)
-    }
+      callback();
+    });
+}
+function checkBuyOperation() {
+    infoApi.ticker((tick) => {
+        console.log("");
+        tick = tick.ticker;
+        //console.log(tick)
+        p.currentTime = formatDate(new Date(tick.date*1000));
+        
+        var sellBRL = parseFloat(tick.sell).toFixed(2); //Get last BRL sell order
+        p.priceBRL = parseFloat(tick.last).toFixed(2);  
+        p.priceBRL = sellBRL > p.priceBRL ? sellBRL : p.priceBRL; //Adjusting for spread problem
 
+        console.log(p);
+        
+        
+        if (d.askUSD > p.stopUSD && d.askUSD < p.profitUSD) {
+            return;
+        } else if (d.askUSD > p.profitUSD) {
+            p.stopUSD = p.profitUSD
+            p.profitUSD = d.askUSD
+            console.log("Operation success. NewStop: " + p.stopUSD + "; NewProfit: " + p.profitUSD);
+            return;
+        } else {
+            var msg = "Criada ordem de venda " + d.amountBTC + " por " + p.priceBRL;
+            console.log(msg);
+            if (d.test === true) {
+                //process.exit(0);
+                sendEmail(msg, function () { process.exit(0); });
+            } else {
+                tradeApi.placeSellOrder(d.amountBTC, p.priceBRL,
+                    (data) => { sendEmail(msg, function () { process.exit(0); } ); },
+                    (data) => { console.log('Erro ao inserir ordem de venda no livro. ' + data) }
+                )
+            }
+        }
+    })
+}
+
+function checkSellOperation() {
     infoApi.ticker((tick) => {
         tick = tick.ticker
         //console.log(tick)
-        var lastSellOrder = parseFloat(tick.sell).toFixed(2); //Get last sell order
-        var lastPrice = parseFloat(tick.last).toFixed(2);  
+        p.currentTime = formatDate(new Date(tick.date*1000));
         
-        setDate(tick.date);
-
-        if (lastSellOrder > lastPrice) { //Adjusting for spread problem
-            lastPrice = lastSellOrder;
-        }
-
-        if (parseInt(lastPrice) == parseInt(d.currentPrice)) {
-            logPrices(d, "No action necessary, same price: ", lastPrice);
-            d.confirmTrend = false;
+        var lastBuyBRLOrder = parseFloat(tick.buy).toFixed(2); //Get last BRL buy order
+        p.lastBRLPrice = parseFloat(tick.last).toFixed(2);  
+        p.lastBRLPrice = lastBuyBRLOrder < p.lastBRLPrice ? lastBuyBRLOrder : p.lastBRLPrice; //Adjusting for spread problem
+        
+        if (p.bidUSDPrice > p.takeProfitUSD) {
+            console.log("bidUSD: " + p.bidUSDPrice + "; takeUSD: " + p.takeProfitUSD + "; askBRL: " + p.lastBRLPrice);
             return;
         }
 
-        if (lastPrice < d.takeProfitPrice && lastPrice > d.stopLossPrice) {
-            //if (lastPrice > d.currentPrice) {
-            //    resetStopLoss(d, lastPrice)
-            //}
+        console.log("Stop loss: ");
+        console.log(p);
 
-            logPrices(d, "No action necessary: ", lastPrice);
-            d.confirmTrend = false;
-            return;
-        } else if (lastPrice >= d.takeProfitPrice) {
-            logPrices(d, "Take Profit: ", lastPrice);
-            console.log("Finished with take profit");
-            return;
-        } else if (lastPrice <= d.stopLossPrice) {
-            logPrices(d, "Stop Loss: ", lastPrice);
+        if (d.test === true) {
+            console.log(`SIMULAÇÃO - Criada ordem de venda ${d.sellBTCAmount} por ${p.lastBRLPrice}`)
         } else {
-            logPrices(d, "No action necessary: ", lastPrice);
-            d.confirmTrend = false;
-            return;
-        }
-        
-        if (!d.confirmTrend) {
-            console.log("Confirming trend...")
-            d.confirmTrend = true;
-            return;
-        }
-        
-        console.log("Trend confirmed...")
-        d.confirmTrend = false;
-        if (d.env === "test") {
-            console.log(`SIMULAÇÃO - Criada ordem de venda ${d.sellAmount} por ${lastPrice}`)
-            d.tradeExecution++;
-            d.checkSellOrder = true;
-        }
-
-        if (d.env === "production") {
-            tradeApi.placeSellOrder(d.sellAmount, lastPrice,
-                (data) => {
-                    console.log(`Criada ordem de venda ${d.sellAmount} por ${lastPrice}`)
-                    d.tradeExecution++;
-                    d.checkSellOrder = true;
-                },
-                (data) => {
-                    console.log('Erro ao inserir ordem de venda no livro. ' + data)
-                }
+            tradeApi.placeSellOrder(d.sellBTCAmount, p.lastBRLPrice,
+                (data) => { console.log(`Criada ordem de venda ${d.sellBTCAmount} por ${p.lastBRLPrice}`) },
+                (data) => { console.log('Erro ao inserir ordem de venda no livro. ' + data) }
             )
         }
     })
 }
 
-function resetStopLoss(d, lastPrice) {
-    d.lastPrice = lastPrice
-    d.currentPrice = lastPrice
-    d.stopLossPrice = (d.lastPrice * (1 - d.stopLoss)).toFixed(2)
-    logPrices(d, "Reset Stop Loss: ")
-}
-
-function resetPrices(d, lastPrice) {
-    d.lastPrice = lastPrice
-    d.currentPrice = lastPrice
-    d.takeProfitPrice = (d.lastPrice * (1 + d.takeProfit)).toFixed(2)
-    d.stopLossPrice = (d.lastPrice * (1 - d.stopLoss)).toFixed(2)
-    logPrices(d, "Reset Prices: ")
-}
-
-function logPrices(d, msg, currentPrice) {
-    let prices = {}
-    
-    if (currentPrice) {
-        prices.currentPrice = currentPrice
-    }
-
-    prices.lastPrice = d.lastPrice
-    prices.takeProfitPrice = d.takeProfitPrice
-    prices.stopLossPrice = d.stopLossPrice
-    prices.currentTime = d.currentTime
-    prices.bidUSDPrice = d.bidUSDPrice
-    prices.askUSDPrice = d.askUSDPrice
-    prices.supportPrice = d.supportPrice
-    prices.status = d.askUSDPrice > d.supportPrice ? "HOLD" : "SELL NOW!"
-    
-    console.log(msg);
-    console.log(prices)
-}
-
 function start() {
-    d.tradeExecution = 0
-    resetPrices(d, d.buyPrice)
     infoApi.ticker((tick) => {
-        console.log("Start: " + new Date());
-        //resetStopLoss(d, parseFloat(tick.ticker.last))
-        setInterval(() => getBitfinexPrice(function(data) { d.askUSDPrice = data[0][3]; d.bidUSDPrice = data[0][1]; trade(); } ); , d.crawlerInteval)
-        
-        
+        console.log("Start: " + formatDate(new Date()));
+        setInterval(() => getBitfinexPrice(
+                function(data) { 
+                    p.priceUSD = d.askUSD;
+                    d.askUSD = parseInt(data[0][3]).toFixed(1);
+                    d.bidUSD = parseInt(data[0][1]).toFixed(1);
+
+                    checkBuyOperation();
+                    //checkSellOperation();
+                } ) , d.crawlerInteval)
     })
 }
 
