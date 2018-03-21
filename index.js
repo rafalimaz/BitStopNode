@@ -36,16 +36,17 @@ var mailOptions = {
 
 var d = {}
 var p = {}
-d.test = true
-d.crawlerInteval = 20000
+d.test = false
+d.crawlerInteval = 50000
 d.amountBTC = 0.02
+d.totalBTC = 0.05755
 d.askUSD = 99999
 d.bidUSD = 0
 
 p.priceBRL = 99999
 p.priceUSD = 0
-p.stopUSD = (8530.0).toFixed(1)
-p.profitUSD = (8540.0).toFixed(1)
+p.stopUSD = 8806.3
+p.profitUSD = 9649.1
 
 p.currentTime = ""
 
@@ -77,6 +78,39 @@ function sendEmail(message, callback) {
       callback();
     });
 }
+
+function checkBuyChance() {
+    infoApi.ticker((tick) => {
+        console.log("");
+        tick = tick.ticker;
+        //console.log(tick)
+        p.currentTime = formatDate(new Date(tick.date*1000));
+        
+        var sellBRL = +(tick.sell).toFixed(2); //Get last BRL sell order
+        var buyBRL = +parseFloat(tick.buy).toFixed(2); //Get last BRL buy order
+        p.priceBRL = +parseFloat(tick.last).toFixed(2);
+        p.priceBRL = buyBRL > p.priceBRL ? buyBRL : p.priceBRL; //Adjusting for spread problem
+
+        console.log(p);
+        
+        if (d.bidUSD > p.chanceUSD) {
+            return;
+        } else {
+            var msg = "Criada ordem de venda " + d.amountBTC + " por " + p.priceBRL;
+            console.log(msg);
+            if (d.test === true) {
+                //process.exit(0);
+                sendEmail(msg, function () { process.exit(0); });
+            } else {
+                tradeApi.placeSellOrder(d.amountBTC, p.priceBRL,
+                    (data) => { sendEmail(msg, function () { process.exit(0); } ); },
+                    (data) => { console.log('Erro ao inserir ordem de venda no livro. ' + data) }
+                )
+            }
+        }
+    })
+}
+
 function checkBuyOperation() {
     infoApi.ticker((tick) => {
         console.log("");
@@ -84,13 +118,12 @@ function checkBuyOperation() {
         //console.log(tick)
         p.currentTime = formatDate(new Date(tick.date*1000));
         
-        var sellBRL = parseFloat(tick.sell).toFixed(2); //Get last BRL sell order
-        p.priceBRL = parseFloat(tick.last).toFixed(2);  
+        var sellBRL = +parseFloat(tick.sell).toFixed(2); //Get last BRL sell order
+        p.priceBRL = +parseFloat(tick.last).toFixed(2);  
         p.priceBRL = sellBRL > p.priceBRL ? sellBRL : p.priceBRL; //Adjusting for spread problem
 
         console.log(p);
-        
-        
+
         if (d.askUSD > p.stopUSD && d.askUSD < p.profitUSD) {
             return;
         } else if (d.askUSD > p.profitUSD) {
@@ -149,8 +182,8 @@ function start() {
         setInterval(() => getBitfinexPrice(
                 function(data) { 
                     p.priceUSD = d.askUSD;
-                    d.askUSD = parseInt(data[0][3]).toFixed(1);
-                    d.bidUSD = parseInt(data[0][1]).toFixed(1);
+                    d.askUSD = +(data[0][3]).toFixed(1);
+                    d.bidUSD = +(data[0][1]).toFixed(1);
 
                     checkBuyOperation();
                     //checkSellOperation();
